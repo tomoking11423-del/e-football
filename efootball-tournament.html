@@ -1,0 +1,835 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#0a0a2e">
+  <title>eFootball Tournament</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Noto Sans JP', sans-serif; background: #0a0a2e; }
+    #root { min-height: 100vh; min-height: 100dvh; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useCallback } = React;
+
+    // Simple Icon component using Lucide
+    function Icon({ name, size = 16 }) {
+      const ref = React.useRef(null);
+      useEffect(() => {
+        if (ref.current && lucide && lucide.icons && lucide.icons[name]) {
+          ref.current.innerHTML = '';
+          const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+          svg.setAttribute('width', size);
+          svg.setAttribute('height', size);
+          svg.setAttribute('viewBox', '0 0 24 24');
+          svg.setAttribute('fill', 'none');
+          svg.setAttribute('stroke', 'currentColor');
+          svg.setAttribute('stroke-width', '2');
+          svg.setAttribute('stroke-linecap', 'round');
+          svg.setAttribute('stroke-linejoin', 'round');
+          svg.innerHTML = lucide.icons[name].toString();
+          ref.current.appendChild(svg);
+        }
+      }, [name, size]);
+      return <span ref={ref} style={{ display: 'inline-flex', alignItems: 'center' }} />;
+    }
+
+    const FORMATIONS = ['4-3-3', '4-4-2', '4-2-3-1', '3-5-2', '4-1-4-1', '5-3-2', '3-4-3', '4-3-2-1'];
+    const TEAM_COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c', '#e91e63', '#00bcd4'];
+
+    function App() {
+      const [currentView, setCurrentView] = useState('tournaments');
+      const [activeTab, setActiveTab] = useState('home');
+      const [players, setPlayers] = useState([]);
+      const [tournaments, setTournaments] = useState([]);
+      const [currentTournamentId, setCurrentTournamentId] = useState(null);
+      const [entryFee, setEntryFee] = useState(1000);
+      const [isLoading, setIsLoading] = useState(true);
+      const [newPlayer, setNewPlayer] = useState({ name: '', formation: '4-3-3' });
+      const [newTournamentName, setNewTournamentName] = useState('');
+      const [showConfetti, setShowConfetti] = useState(false);
+      const [showAddModal, setShowAddModal] = useState(false);
+      const [showNewTournamentModal, setShowNewTournamentModal] = useState(false);
+      const [selectedRoundIndex, setSelectedRoundIndex] = useState(null);
+
+      const currentTournament = tournaments.find(t => t.id === currentTournamentId);
+      const currentRound = currentTournament && selectedRoundIndex !== null 
+        ? currentTournament.rounds[selectedRoundIndex] : null;
+
+      useEffect(() => {
+        try {
+          const data = localStorage.getItem('efootball-v6-data');
+          if (data) {
+            const parsed = JSON.parse(data);
+            setPlayers(parsed.players || []);
+            setTournaments(parsed.tournaments || []);
+            setEntryFee(parsed.entryFee || 1000);
+          }
+        } catch (e) {}
+        setIsLoading(false);
+      }, []);
+
+      const saveData = useCallback(() => {
+        if (isLoading) return;
+        try {
+          localStorage.setItem('efootball-v6-data', JSON.stringify({ players, tournaments, entryFee }));
+        } catch (e) {}
+      }, [players, tournaments, entryFee, isLoading]);
+
+      useEffect(() => { saveData(); }, [saveData]);
+
+      const addPlayer = () => {
+        if (!newPlayer.name.trim()) return;
+        if (players.find(p => p.name.toLowerCase() === newPlayer.name.toLowerCase())) {
+          alert('同じ名前の選手が既に登録されています');
+          return;
+        }
+        const player = {
+          id: Date.now(), name: newPlayer.name, formation: newPlayer.formation,
+          totalWins: 0, totalLosses: 0, tournamentWins: 0, totalPrize: 0, prizeHistory: [],
+          color: TEAM_COLORS[players.length % TEAM_COLORS.length]
+        };
+        setPlayers([...players, player]);
+        setNewPlayer({ name: '', formation: '4-3-3' });
+        setShowAddModal(false);
+      };
+
+      const deletePlayer = (id) => setPlayers(players.filter(p => p.id !== id));
+      const getWinRate = (p) => {
+        const t = p.totalWins + p.totalLosses;
+        return t === 0 ? 0 : Math.round((p.totalWins / t) * 100);
+      };
+
+      const createTournament = () => {
+        if (!newTournamentName.trim()) return;
+        const tournament = {
+          id: Date.now(), name: newTournamentName, createdAt: new Date().toISOString(),
+          entryFee, participants: [], rounds: [], totalPrizePool: 0
+        };
+        setTournaments([tournament, ...tournaments]);
+        setNewTournamentName('');
+        setShowNewTournamentModal(false);
+        setCurrentTournamentId(tournament.id);
+        setCurrentView('main');
+        setActiveTab('home');
+      };
+
+      const deleteTournament = (id) => {
+        if (confirm('この大会を削除しますか？')) setTournaments(tournaments.filter(t => t.id !== id));
+      };
+
+      const selectTournament = (id) => {
+        setCurrentTournamentId(id);
+        setSelectedRoundIndex(null);
+        setCurrentView('main');
+        setActiveTab('home');
+      };
+
+      const addParticipant = (playerId) => {
+        if (!currentTournament || currentTournament.participants.includes(playerId)) return;
+        setTournaments(tournaments.map(t => 
+          t.id === currentTournamentId ? { ...t, participants: [...t.participants, playerId] } : t
+        ));
+      };
+
+      const removeParticipant = (playerId) => {
+        if (!currentTournament) return;
+        setTournaments(tournaments.map(t => 
+          t.id === currentTournamentId ? { ...t, participants: t.participants.filter(p => p !== playerId) } : t
+        ));
+      };
+
+      const getParticipants = () => {
+        if (!currentTournament) return [];
+        return currentTournament.participants.map(id => players.find(p => p.id === id)).filter(Boolean);
+      };
+
+      const startNewRound = () => {
+        const participants = getParticipants();
+        if (participants.length < 2) return;
+        
+        const shuffled = [...participants].sort(() => Math.random() - 0.5);
+        const rounds = Math.ceil(Math.log2(shuffled.length));
+        const bracketSize = Math.pow(2, rounds);
+        
+        while (shuffled.length < bracketSize) {
+          shuffled.push({ id: `bye-${shuffled.length}`, name: 'BYE', isBye: true });
+        }
+        
+        const winnerMatches = [];
+        for (let i = 0; i < shuffled.length; i += 2) {
+          const match = {
+            id: `W-R1-M${i/2}`, round: 1, player1: shuffled[i], player2: shuffled[i + 1],
+            score1: null, score2: null, winner: null, loser: null
+          };
+          if (shuffled[i + 1]?.isBye) { match.winner = shuffled[i]; match.loser = shuffled[i + 1]; }
+          else if (shuffled[i]?.isBye) { match.winner = shuffled[i + 1]; match.loser = shuffled[i]; }
+          winnerMatches.push(match);
+        }
+        
+        const newRound = {
+          id: Date.now(), roundNumber: (currentTournament?.rounds.length || 0) + 1,
+          startedAt: new Date().toISOString(), status: 'active',
+          prizePool: participants.length * currentTournament.entryFee,
+          totalRounds: rounds, bracketSize, winnerMatches, loserMatches: [],
+          isComplete: false, finalResults: null
+        };
+        
+        setTournaments(tournaments.map(t => 
+          t.id === currentTournamentId 
+            ? { ...t, rounds: [...t.rounds, newRound], totalPrizePool: t.totalPrizePool + newRound.prizePool }
+            : t
+        ));
+        
+        setSelectedRoundIndex(currentTournament.rounds.length);
+        setActiveTab('tournament');
+      };
+
+      const recordResult = (matchId, score1, score2, isEdit = false) => {
+        if (score1 === score2 || selectedRoundIndex === null) return;
+        
+        const tournament = tournaments.find(t => t.id === currentTournamentId);
+        if (!tournament) return;
+        
+        const round = JSON.parse(JSON.stringify(tournament.rounds[selectedRoundIndex]));
+        let match = round.winnerMatches.find(m => m.id === matchId);
+        let matchIndex = round.winnerMatches.findIndex(m => m.id === matchId);
+        let isWinnerBracket = true;
+        
+        if (!match) {
+          match = round.loserMatches.find(m => m.id === matchId);
+          matchIndex = round.loserMatches.findIndex(m => m.id === matchId);
+          isWinnerBracket = false;
+        }
+        if (!match) return;
+        
+        if (isEdit && match.winner && !match.winner.isBye && !match.loser?.isBye) {
+          setPlayers(ps => ps.map(p => {
+            if (p.id === match.winner?.id) return { ...p, totalWins: Math.max(0, p.totalWins - 1) };
+            if (p.id === match.loser?.id) return { ...p, totalLosses: Math.max(0, p.totalLosses - 1) };
+            return p;
+          }));
+        }
+        
+        match.score1 = score1; match.score2 = score2;
+        match.winner = score1 > score2 ? match.player1 : match.player2;
+        match.loser = score1 > score2 ? match.player2 : match.player1;
+        
+        if (isWinnerBracket) round.winnerMatches[matchIndex] = match;
+        else round.loserMatches[matchIndex] = match;
+        
+        if (!match.winner?.isBye && !match.loser?.isBye) {
+          setPlayers(ps => ps.map(p => {
+            if (p.id === match.winner?.id) return { ...p, totalWins: p.totalWins + 1 };
+            if (p.id === match.loser?.id) return { ...p, totalLosses: p.totalLosses + 1 };
+            return p;
+          }));
+        }
+        
+        processBracket(round);
+        const result = checkCompletion(round, tournament);
+        
+        if (result.isComplete) {
+          round.isComplete = true;
+          round.status = 'complete';
+          round.finalResults = result.finalResults;
+          
+          setPlayers(ps => ps.map(p => {
+            const prizeInfo = result.finalResults.distribution.find(d => d.id === p.id);
+            if (prizeInfo) {
+              return {
+                ...p, totalPrize: p.totalPrize + prizeInfo.prize,
+                tournamentWins: prizeInfo.place === 1 ? p.tournamentWins + 1 : p.tournamentWins,
+                prizeHistory: [...p.prizeHistory, {
+                  tournamentId: tournament.id, tournamentName: tournament.name,
+                  roundNumber: round.roundNumber, place: prizeInfo.place, prize: prizeInfo.prize,
+                  date: new Date().toISOString()
+                }]
+              };
+            }
+            return p;
+          }));
+          
+          setShowConfetti(true);
+          setTimeout(() => setShowConfetti(false), 5000);
+        }
+        
+        const newRounds = [...tournament.rounds];
+        newRounds[selectedRoundIndex] = round;
+        setTournaments(tournaments.map(t => t.id === currentTournamentId ? { ...t, rounds: newRounds } : t));
+      };
+
+      const processBracket = (round) => {
+        const { totalRounds, winnerMatches, loserMatches } = round;
+        
+        for (let r = 1; r <= totalRounds; r++) {
+          const rm = winnerMatches.filter(m => m.round === r);
+          if (rm.every(m => m.winner) && r < totalRounds) {
+            const nextRound = r + 1;
+            if (!winnerMatches.some(m => m.round === nextRound)) {
+              const winners = rm.map(m => m.winner);
+              for (let i = 0; i < winners.length; i += 2) {
+                winnerMatches.push({
+                  id: `W-R${nextRound}-M${i/2}`, round: nextRound,
+                  player1: winners[i], player2: winners[i + 1],
+                  score1: null, score2: null, winner: null, loser: null
+                });
+              }
+            }
+            const losers = rm.filter(m => !m.loser?.isBye).map(m => m.loser);
+            if (!loserMatches.some(m => m.round === r) && losers.length >= 2) {
+              for (let i = 0; i < losers.length; i += 2) {
+                if (losers[i + 1]) {
+                  loserMatches.push({
+                    id: `L-R${r}-M${i/2}`, round: r,
+                    player1: losers[i], player2: losers[i + 1],
+                    score1: null, score2: null, winner: null, loser: null
+                  });
+                }
+              }
+            }
+          }
+        }
+        
+        for (let r = 1; r < totalRounds; r++) {
+          const rm = loserMatches.filter(m => m.round === r);
+          if (rm.every(m => m.winner) && rm.length >= 2) {
+            const nextRound = r + 0.5;
+            if (!loserMatches.some(m => m.round === nextRound)) {
+              const winners = rm.map(m => m.winner);
+              for (let i = 0; i < winners.length; i += 2) {
+                if (winners[i + 1]) {
+                  loserMatches.push({
+                    id: `L-R${nextRound}-M${i/2}`, round: nextRound,
+                    player1: winners[i], player2: winners[i + 1],
+                    score1: null, score2: null, winner: null, loser: null
+                  });
+                }
+              }
+            }
+          }
+        }
+      };
+
+      const checkCompletion = (round, tournament) => {
+        const { totalRounds, winnerMatches, loserMatches } = round;
+        const finalMatch = winnerMatches.find(m => m.round === totalRounds);
+        
+        if (finalMatch?.winner) {
+          const allLoserComplete = loserMatches.length === 0 || loserMatches.every(m => m.winner);
+          const allWinnerComplete = winnerMatches.every(m => m.winner);
+          
+          if (allWinnerComplete && allLoserComplete) {
+            const rankings = [];
+            if (finalMatch.winner) rankings.push({ ...finalMatch.winner, place: 1 });
+            if (finalMatch.loser && !finalMatch.loser.isBye) rankings.push({ ...finalMatch.loser, place: 2 });
+            
+            for (let r = totalRounds - 1; r >= 1; r--) {
+              loserMatches.filter(m => Math.floor(m.round) === r).forEach(m => {
+                if (m.winner && !m.winner.isBye && !rankings.find(x => x.id === m.winner.id))
+                  rankings.push({ ...m.winner, place: rankings.length + 1 });
+                if (m.loser && !m.loser.isBye && !rankings.find(x => x.id === m.loser.id))
+                  rankings.push({ ...m.loser, place: rankings.length + 1 });
+              });
+            }
+            
+            winnerMatches.forEach(m => {
+              if (m.loser && !m.loser.isBye && !rankings.find(x => x.id === m.loser.id))
+                rankings.push({ ...m.loser, place: rankings.length + 1 });
+            });
+            
+            const pct = { 1: 0.40, 2: 0.25, 3: 0.15, 4: 0.10, 5: 0.05, 6: 0.03, 7: 0.01, 8: 0.01 };
+            const distribution = rankings.map((p, i) => ({
+              ...p, place: i + 1, prize: Math.floor(round.prizePool * (pct[i + 1] || 0)),
+              percent: ((pct[i + 1] || 0) * 100).toFixed(1)
+            }));
+            
+            return { isComplete: true, finalResults: { rankings, distribution, totalPrize: round.prizePool } };
+          }
+        }
+        return { isComplete: false };
+      };
+
+      const getPlayerTournamentPrize = (playerId) => {
+        if (!currentTournament) return 0;
+        const player = players.find(p => p.id === playerId);
+        if (!player) return 0;
+        return player.prizeHistory.filter(h => h.tournamentId === currentTournament.id).reduce((s, h) => s + h.prize, 0);
+      };
+
+      const getRankedPlayers = () => [...players].sort((a, b) => {
+        if (b.totalPrize !== a.totalPrize) return b.totalPrize - a.totalPrize;
+        if (b.tournamentWins !== a.tournamentWins) return b.tournamentWins - a.tournamentWins;
+        return getWinRate(b) - getWinRate(a);
+      });
+
+      if (isLoading) return (
+        <div className="loading-screen">
+          <div className="efootball-logo"><span className="logo-e">e</span><span className="logo-text">FOOTBALL</span></div>
+          <div className="loader"></div>
+        </div>
+      );
+
+      if (currentView === 'tournaments') return (
+        <div className="app-container">
+          <header className="app-header">
+            <div className="header-left">
+              <div className="efootball-logo small"><span className="logo-e">e</span><span className="logo-text">FOOTBALL</span></div>
+            </div>
+            <div className="header-right">
+              <div className="currency-badge"><Icon name="users" size={14} /><span>{players.length}名</span></div>
+            </div>
+          </header>
+
+          <main className="main-content">
+            <div className="select-header"><h1><Icon name="trophy" size={24} /> 大会選択</h1></div>
+
+            <button className="btn-new-tournament" onClick={() => setShowNewTournamentModal(true)}>
+              <Icon name="plus" size={20} /><span>新規大会を作成</span>
+            </button>
+
+            <div className="section-title"><span>大会一覧</span></div>
+            <div className="tournament-list">
+              {tournaments.length === 0 ? (
+                <div className="empty-state"><Icon name="calendar" size={40} /><p>まだ大会がありません</p></div>
+              ) : (
+                tournaments.map(t => (
+                  <div key={t.id} className="tournament-card">
+                    <div className="tournament-info" onClick={() => selectTournament(t.id)}>
+                      <div className="tournament-icon"><Icon name="trophy" size={20} /></div>
+                      <div className="tournament-details">
+                        <h3>{t.name}</h3>
+                        <div className="tournament-meta">
+                          <span><Icon name="users" size={12} /> {t.participants.length}名</span>
+                          <span><Icon name="play" size={12} /> {t.rounds.length}回</span>
+                          <span><Icon name="coins" size={12} /> ¥{t.totalPrizePool.toLocaleString()}</span>
+                        </div>
+                      </div>
+                      <Icon name="chevron-right" size={18} />
+                    </div>
+                    <button className="delete-btn" onClick={() => deleteTournament(t.id)}><Icon name="trash-2" size={14} /></button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="section-title">
+              <span>賞金ランキング</span>
+              <button className="add-btn" onClick={() => setShowAddModal(true)}><Icon name="plus" size={14} /> 選手追加</button>
+            </div>
+            <div className="ranking-list">
+              {getRankedPlayers().slice(0, 5).map((player, idx) => (
+                <div key={player.id} className={`ranking-row rank-${idx + 1}`}>
+                  <div className="rank-badge">
+                    {idx === 0 ? <Icon name="crown" size={14} /> : idx === 1 ? <Icon name="medal" size={14} /> : idx === 2 ? <Icon name="star" size={14} /> : idx + 1}
+                  </div>
+                  <div className="rank-color" style={{ background: player.color }}></div>
+                  <span className="rank-name">{player.name}</span>
+                  <div className="rank-prize">¥{player.totalPrize.toLocaleString()}</div>
+                </div>
+              ))}
+              {players.length === 0 && <div className="empty-state small" onClick={() => setShowAddModal(true)}><Icon name="user" size={24} /><span>選手を登録</span></div>}
+            </div>
+          </main>
+
+          {showNewTournamentModal && (
+            <Modal title="新規大会作成" onClose={() => setShowNewTournamentModal(false)}>
+              <div className="form-group">
+                <label>大会名</label>
+                <input type="text" placeholder="例: 第1回チャンピオンシップ" value={newTournamentName}
+                  onChange={(e) => setNewTournamentName(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && createTournament()} autoFocus />
+              </div>
+              <div className="form-group">
+                <label>参加費（1トーナメントあたり）</label>
+                <div className="input-with-prefix">
+                  <span>¥</span>
+                  <input type="number" value={entryFee} onChange={(e) => setEntryFee(Number(e.target.value))} />
+                </div>
+              </div>
+              <div className="modal-actions">
+                <button className="btn-cancel" onClick={() => setShowNewTournamentModal(false)}>キャンセル</button>
+                <button className="btn-confirm" onClick={createTournament}>作成</button>
+              </div>
+            </Modal>
+          )}
+
+          {showAddModal && (
+            <Modal title="選手登録" onClose={() => setShowAddModal(false)}>
+              <div className="form-group">
+                <label>選手名</label>
+                <input type="text" placeholder="名前を入力" value={newPlayer.name}
+                  onChange={(e) => setNewPlayer({ ...newPlayer, name: e.target.value })}
+                  onKeyDown={(e) => e.key === 'Enter' && addPlayer()} autoFocus />
+              </div>
+              <div className="form-group">
+                <label>フォーメーション</label>
+                <select value={newPlayer.formation} onChange={(e) => setNewPlayer({ ...newPlayer, formation: e.target.value })}>
+                  {FORMATIONS.map(f => <option key={f}>{f}</option>)}
+                </select>
+              </div>
+              <div className="modal-actions">
+                <button className="btn-cancel" onClick={() => setShowAddModal(false)}>キャンセル</button>
+                <button className="btn-confirm" onClick={addPlayer}>登録</button>
+              </div>
+            </Modal>
+          )}
+        </div>
+      );
+
+      // Main Tournament View
+      return (
+        <div className="app-container">
+          {showConfetti && <Confetti />}
+          
+          <header className="app-header">
+            <div className="header-left">
+              <button className="back-btn" onClick={() => { setCurrentView('tournaments'); setSelectedRoundIndex(null); }}>
+                <Icon name="arrow-left" size={18} />
+              </button>
+              <div className="tournament-title"><span className="title-name">{currentTournament?.name}</span></div>
+            </div>
+            <div className="header-right">
+              <div className="currency-badge gold"><Icon name="coins" size={14} /><span>¥{currentTournament?.totalPrizePool.toLocaleString()}</span></div>
+            </div>
+          </header>
+
+          <nav className="top-nav">
+            {['home', 'tournament', 'prizes'].map(tab => (
+              <button key={tab} className={`top-nav-btn ${activeTab === tab ? 'active' : ''}`} onClick={() => setActiveTab(tab)}>
+                {tab === 'home' ? 'ホーム' : tab === 'tournament' ? '試合' : '賞金'}
+              </button>
+            ))}
+          </nav>
+
+          <main className="main-content">
+            {activeTab === 'home' && (
+              <div className="home-section">
+                <div className="info-cards">
+                  <div className="info-card">
+                    <div className="info-icon"><Icon name="users" size={18} /></div>
+                    <div className="info-content"><span className="info-value">{getParticipants().length}名</span><span className="info-label">参加者</span></div>
+                  </div>
+                  <div className="info-card">
+                    <div className="info-icon"><Icon name="play" size={18} /></div>
+                    <div className="info-content"><span className="info-value">{currentTournament?.rounds.length || 0}回</span><span className="info-label">トーナメント</span></div>
+                  </div>
+                  <div className="info-card gold">
+                    <div className="info-icon"><Icon name="coins" size={18} /></div>
+                    <div className="info-content"><span className="info-value">¥{currentTournament?.totalPrizePool.toLocaleString()}</span><span className="info-label">累計賞金</span></div>
+                  </div>
+                </div>
+
+                <div className="section-title"><span>参加者選択</span></div>
+                <div className="participant-grid">
+                  {players.map(player => {
+                    const isP = currentTournament?.participants.includes(player.id);
+                    return (
+                      <div key={player.id} className={`participant-chip ${isP ? 'selected' : ''}`}
+                        onClick={() => isP ? removeParticipant(player.id) : addParticipant(player.id)}>
+                        <div className="chip-color" style={{ background: player.color }}></div>
+                        <span>{player.name}</span>
+                        {isP && <Icon name="check" size={14} />}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {getParticipants().length >= 2 && (
+                  <button className="btn-start" onClick={startNewRound}>
+                    <Icon name="shuffle" size={18} />新しいトーナメントを開始
+                  </button>
+                )}
+
+                {currentTournament?.rounds.length > 0 && (
+                  <>
+                    <div className="section-title"><span><Icon name="history" size={14} /> トーナメント履歴</span></div>
+                    <div className="round-list">
+                      {currentTournament.rounds.map((round, idx) => (
+                        <div key={round.id} className={`round-card ${round.status}`}
+                          onClick={() => { setSelectedRoundIndex(idx); setActiveTab('tournament'); }}>
+                          <div className="round-num">#{round.roundNumber}</div>
+                          <div className="round-info">
+                            <span className="round-title">第{round.roundNumber}回トーナメント</span>
+                            <span className="round-prize">賞金: ¥{round.prizePool.toLocaleString()}</span>
+                          </div>
+                          <div className={`round-status ${round.status}`}>{round.status === 'active' ? '進行中' : '終了'}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {activeTab === 'tournament' && (
+              <div className="tournament-section">
+                {currentTournament?.rounds.length > 0 && (
+                  <div className="round-selector">
+                    {currentTournament.rounds.map((r, idx) => (
+                      <button key={r.id} className={`round-tab ${selectedRoundIndex === idx ? 'active' : ''} ${r.status}`}
+                        onClick={() => setSelectedRoundIndex(idx)}>#{r.roundNumber}</button>
+                    ))}
+                  </div>
+                )}
+
+                {!currentRound ? (
+                  <div className="empty-state">
+                    <Icon name="trophy" size={40} />
+                    <p>トーナメントを選択するか、<br/>新しく開始してください</p>
+                    <button className="btn-primary" onClick={() => setActiveTab('home')}>ホームへ</button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="round-header">
+                      <h2>第{currentRound.roundNumber}回トーナメント</h2>
+                      <span className="round-prize-badge">¥{currentRound.prizePool.toLocaleString()}</span>
+                    </div>
+
+                    <div className="bracket-scroll">
+                      <div className="bracket-container">
+                        {Array.from({ length: currentRound.totalRounds }, (_, i) => i + 1).map(round => {
+                          const matches = currentRound.winnerMatches.filter(m => m.round === round);
+                          const name = round === currentRound.totalRounds ? '決勝' :
+                                      round === currentRound.totalRounds - 1 ? '準決勝' : `R${round}`;
+                          return (
+                            <div key={round} className="bracket-round">
+                              <div className="round-label">{name}</div>
+                              <div className="round-matches">
+                                {matches.map(match => <MatchBox key={match.id} match={match} onRecord={recordResult} />)}
+                              </div>
+                            </div>
+                          );
+                        })}
+                        <div className="champion-slot">
+                          <Icon name="crown" size={24} />
+                          {currentRound.winnerMatches.find(m => m.round === currentRound.totalRounds)?.winner ? (
+                            <span>{currentRound.winnerMatches.find(m => m.round === currentRound.totalRounds).winner.name}</span>
+                          ) : <span className="tbd">優勝者</span>}
+                        </div>
+                      </div>
+                    </div>
+
+                    {currentRound.loserMatches.length > 0 && (
+                      <>
+                        <div className="section-title small"><span>順位決定戦</span></div>
+                        <div className="loser-bracket">
+                          {Array.from(new Set(currentRound.loserMatches.map(m => m.round))).sort().map(r => (
+                            <div key={r} className="loser-round">
+                              {currentRound.loserMatches.filter(m => m.round === r).map(match => (
+                                <MatchBox key={match.id} match={match} onRecord={recordResult} isLoser />
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    )}
+
+                    {currentRound.isComplete && <div className="complete-banner"><Icon name="crown" size={28} /><span>トーナメント終了！</span></div>}
+                  </>
+                )}
+              </div>
+            )}
+
+            {activeTab === 'prizes' && (
+              <div className="prizes-section">
+                <div className="prize-summary">
+                  <div className="summary-card total">
+                    <span className="summary-label">大会累計賞金</span>
+                    <span className="summary-value">¥{currentTournament?.totalPrizePool.toLocaleString()}</span>
+                  </div>
+                </div>
+
+                <div className="section-title"><span>プレイヤー獲得賞金</span></div>
+                <div className="prize-list">
+                  {getParticipants()
+                    .map(p => ({ ...p, tournamentPrize: getPlayerTournamentPrize(p.id) }))
+                    .sort((a, b) => b.tournamentPrize - a.tournamentPrize)
+                    .map((player, idx) => (
+                      <div key={player.id} className={`prize-row ${idx < 3 ? `top-${idx + 1}` : ''}`}>
+                        <div className="prize-rank">
+                          {idx === 0 ? <Icon name="crown" size={16} /> : idx === 1 ? <Icon name="medal" size={16} /> : idx === 2 ? <Icon name="star" size={16} /> : idx + 1}
+                        </div>
+                        <div className="prize-color" style={{ background: player.color }}></div>
+                        <div className="prize-info">
+                          <span className="prize-name">{player.name}</span>
+                          <span className="prize-total">通算: ¥{player.totalPrize.toLocaleString()}</span>
+                        </div>
+                        <div className="prize-amount">¥{player.tournamentPrize.toLocaleString()}</div>
+                      </div>
+                    ))}
+                </div>
+
+                {currentTournament?.rounds.filter(r => r.isComplete).length > 0 && (
+                  <>
+                    <div className="section-title"><span>トーナメント別結果</span></div>
+                    {currentTournament.rounds.filter(r => r.isComplete).map(round => (
+                      <div key={round.id} className="round-result">
+                        <div className="round-result-header">
+                          <span>第{round.roundNumber}回</span>
+                          <span className="round-result-prize">¥{round.prizePool.toLocaleString()}</span>
+                        </div>
+                        <div className="round-result-list">
+                          {round.finalResults?.distribution.slice(0, 4).map(p => (
+                            <div key={p.id} className="round-result-row">
+                              <span className="rr-place">{p.place}位</span>
+                              <span className="rr-name">{p.name}</span>
+                              <span className="rr-prize">¥{p.prize.toLocaleString()}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+            )}
+          </main>
+
+          <nav className="bottom-nav">
+            <button className={`nav-item ${activeTab === 'home' ? 'active' : ''}`} onClick={() => setActiveTab('home')}>
+              <Icon name="home" size={18} /><span>ホーム</span>
+            </button>
+            <button className={`nav-item ${activeTab === 'tournament' ? 'active' : ''}`} onClick={() => setActiveTab('tournament')}>
+              <Icon name="trophy" size={18} /><span>試合</span>
+            </button>
+            <button className="nav-item center" onClick={startNewRound} disabled={getParticipants().length < 2}>
+              <div className="center-icon"><Icon name="play" size={20} /></div>
+            </button>
+            <button className={`nav-item ${activeTab === 'prizes' ? 'active' : ''}`} onClick={() => setActiveTab('prizes')}>
+              <Icon name="coins" size={18} /><span>賞金</span>
+            </button>
+            <button className="nav-item" onClick={() => setShowAddModal(true)}>
+              <Icon name="user" size={18} /><span>登録</span>
+            </button>
+          </nav>
+
+          {showAddModal && (
+            <Modal title="選手登録" onClose={() => setShowAddModal(false)}>
+              <div className="form-group">
+                <label>選手名</label>
+                <input type="text" placeholder="名前を入力" value={newPlayer.name}
+                  onChange={(e) => setNewPlayer({ ...newPlayer, name: e.target.value })}
+                  onKeyDown={(e) => e.key === 'Enter' && addPlayer()} autoFocus />
+              </div>
+              <div className="form-group">
+                <label>フォーメーション</label>
+                <select value={newPlayer.formation} onChange={(e) => setNewPlayer({ ...newPlayer, formation: e.target.value })}>
+                  {FORMATIONS.map(f => <option key={f}>{f}</option>)}
+                </select>
+              </div>
+              <div className="modal-actions">
+                <button className="btn-cancel" onClick={() => setShowAddModal(false)}>キャンセル</button>
+                <button className="btn-confirm" onClick={addPlayer}>登録</button>
+              </div>
+            </Modal>
+          )}
+        </div>
+      );
+    }
+
+    function Modal({ title, onClose, children }) {
+      return (
+        <div className="modal-overlay" onClick={onClose}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{title}</h3>
+              <button className="modal-close" onClick={onClose}><Icon name="x" size={18} /></button>
+            </div>
+            <div className="modal-body">{children}</div>
+          </div>
+        </div>
+      );
+    }
+
+    function MatchBox({ match, onRecord, isLoser }) {
+      const [editing, setEditing] = useState(false);
+      const [score1, setScore1] = useState('');
+      const [score2, setScore2] = useState('');
+
+      const handleSubmit = () => {
+        const s1 = parseInt(score1) || 0;
+        const s2 = parseInt(score2) || 0;
+        if (s1 !== s2) {
+          onRecord(match.id, s1, s2, !!match.winner);
+          setEditing(false);
+          setScore1(''); setScore2('');
+        }
+      };
+
+      const startEdit = () => {
+        setScore1(match.score1?.toString() || '');
+        setScore2(match.score2?.toString() || '');
+        setEditing(true);
+      };
+
+      const isReady = match.player1 && match.player2 && !match.player1.isBye && !match.player2.isBye;
+
+      return (
+        <div className={`match-box ${match.winner ? 'complete' : ''} ${isReady && !match.winner ? 'ready' : ''} ${isLoser ? 'loser' : ''}`}>
+          <div className={`match-player ${match.winner?.id === match.player1?.id ? 'winner' : ''}`}>
+            {match.player1?.isBye ? <span className="bye">BYE</span> : match.player1 ? (
+              <><span className="name">{match.player1.name}</span>{match.score1 !== null && <span className="score">{match.score1}</span>}</>
+            ) : <span className="tbd">TBD</span>}
+          </div>
+          <div className="match-vs">VS</div>
+          <div className={`match-player ${match.winner?.id === match.player2?.id ? 'winner' : ''}`}>
+            {match.player2?.isBye ? <span className="bye">BYE</span> : match.player2 ? (
+              <><span className="name">{match.player2.name}</span>{match.score2 !== null && <span className="score">{match.score2}</span>}</>
+            ) : <span className="tbd">TBD</span>}
+          </div>
+          {isReady && (
+            <div className="match-action">
+              {editing ? (
+                <div className="score-input">
+                  <input type="number" value={score1} onChange={e => setScore1(e.target.value)} placeholder="0" />
+                  <span>-</span>
+                  <input type="number" value={score2} onChange={e => setScore2(e.target.value)} placeholder="0" />
+                  <button className="ok" onClick={handleSubmit}><Icon name="check" size={12} /></button>
+                  <button className="no" onClick={() => setEditing(false)}><Icon name="x" size={12} /></button>
+                </div>
+              ) : (
+                <button className={match.winner ? 'edit' : 'enter'} onClick={match.winner ? startEdit : () => setEditing(true)}>
+                  {match.winner ? '修正' : '入力'}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function Confetti() {
+      return (
+        <div className="confetti-wrap">
+          {Array.from({ length: 40 }).map((_, i) => (
+            <div key={i} className="confetti" style={{
+              left: `${Math.random() * 100}%`,
+              animationDelay: `${Math.random() * 2}s`,
+              background: ['#ffd700', '#ff0066', '#00d4ff', '#00ff88'][Math.floor(Math.random() * 4)]
+            }} />
+          ))}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+  <style>
+    .app-container{min-height:100vh;min-height:100dvh;background:linear-gradient(145deg,#0a0a2e 0%,#1a1a4a 50%,#050520 100%);color:#fff;font-family:'Noto Sans JP',sans-serif;padding-bottom:calc(80px + env(safe-area-inset-bottom,0px))}.loading-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;height:100dvh}.efootball-logo{display:flex;align-items:baseline;gap:2px;margin-bottom:1.5rem}.logo-e{font-size:2rem;font-weight:900;font-style:italic}.logo-text{font-size:1.4rem;font-weight:700;letter-spacing:2px}.efootball-logo.small .logo-e{font-size:1.3rem}.efootball-logo.small .logo-text{font-size:1rem}.loader{width:40px;height:40px;border:3px solid rgba(255,0,102,0.2);border-top-color:#ff0066;border-radius:50%;animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}.app-header{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;padding-top:calc(10px + env(safe-area-inset-top,0px));background:rgba(0,0,0,0.5)}.header-left{display:flex;align-items:center;gap:10px}.back-btn{width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.1);border:none;border-radius:8px;color:#fff;cursor:pointer}.tournament-title{display:flex;flex-direction:column}.title-name{font-size:0.95rem;font-weight:700}.header-right{display:flex;gap:8px}.currency-badge{display:flex;align-items:center;gap:5px;padding:5px 10px;background:rgba(0,0,0,0.4);border-radius:16px;font-size:0.8rem;font-weight:600}.currency-badge.gold{background:rgba(255,215,0,0.15);color:#ffd700}.top-nav{display:flex;padding:0 8px;gap:4px}.top-nav-btn{flex:1;padding:10px 8px;background:transparent;border:none;border-bottom:2px solid transparent;color:#666;font-family:inherit;font-size:0.85rem;font-weight:600;cursor:pointer}.top-nav-btn:hover{color:#aaa}.top-nav-btn.active{color:#fff;border-bottom-color:#ffd700}.main-content{padding:12px;max-width:500px;margin:0 auto;overflow-x:hidden}.select-header{text-align:center;padding:16px 0}.select-header h1{display:flex;align-items:center;justify-content:center;gap:8px;font-size:1.2rem;color:#ffd700}.btn-new-tournament{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:14px;background:linear-gradient(135deg,#ff0066,#cc0052);border:none;border-radius:10px;color:#fff;font-family:inherit;font-size:0.95rem;font-weight:700;cursor:pointer;margin-bottom:16px}.section-title{display:flex;justify-content:space-between;align-items:center;margin:16px 0 10px;padding-left:10px;border-left:3px solid #ff0066;font-size:0.85rem;font-weight:700}.section-title.small{font-size:0.8rem;margin:12px 0 8px}.add-btn{display:flex;align-items:center;gap:4px;padding:5px 10px;background:linear-gradient(135deg,#ff0066,#cc0052);border:none;border-radius:14px;color:#fff;font-size:0.75rem;font-weight:600;cursor:pointer}.tournament-list{display:flex;flex-direction:column;gap:8px}.tournament-card{display:flex;align-items:center;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);border-radius:10px;overflow:hidden}.tournament-info{flex:1;display:flex;align-items:center;gap:10px;padding:12px;cursor:pointer}.tournament-icon{width:40px;height:40px;display:flex;align-items:center;justify-content:center;background:rgba(255,0,102,0.15);border-radius:10px;color:#ff0066}.tournament-details{flex:1}.tournament-details h3{font-size:0.9rem;margin-bottom:4px}.tournament-meta{display:flex;gap:10px;font-size:0.7rem;color:#888}.tournament-meta span{display:flex;align-items:center;gap:3px}.delete-btn{width:40px;height:100%;display:flex;align-items:center;justify-content:center;background:rgba(255,0,0,0.1);border:none;color:#ff6666;cursor:pointer;opacity:0;transition:opacity 0.2s}.tournament-card:hover .delete-btn{opacity:1}.ranking-list{display:flex;flex-direction:column;gap:6px}.ranking-row{display:flex;align-items:center;gap:10px;padding:10px 12px;background:rgba(0,0,0,0.3);border-radius:8px}.ranking-row.rank-1{background:linear-gradient(90deg,rgba(255,215,0,0.15),transparent)}.ranking-row.rank-2{background:linear-gradient(90deg,rgba(192,192,192,0.1),transparent)}.ranking-row.rank-3{background:linear-gradient(90deg,rgba(205,127,50,0.1),transparent)}.rank-badge{width:24px;height:24px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.1);border-radius:6px;font-size:0.75rem;font-weight:700;color:#666}.rank-1 .rank-badge{color:#ffd700}.rank-2 .rank-badge{color:#c0c0c0}.rank-3 .rank-badge{color:#cd7f32}.rank-color{width:4px;height:20px;border-radius:2px}.rank-name{flex:1;font-size:0.85rem;font-weight:600}.rank-prize{font-size:0.85rem;color:#ffd700;font-weight:700}.empty-state{display:flex;flex-direction:column;align-items:center;padding:32px;color:#444;text-align:center}.empty-state.small{padding:20px}.empty-state svg{margin-bottom:10px;opacity:0.5}.empty-state p{font-size:0.85rem}.info-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px}.info-card{display:flex;flex-direction:column;align-items:center;padding:12px 8px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);border-radius:10px}.info-card.gold{background:rgba(255,215,0,0.1);border-color:rgba(255,215,0,0.2)}.info-icon{color:#888;margin-bottom:6px}.info-card.gold .info-icon{color:#ffd700}.info-content{text-align:center}.info-value{display:block;font-size:0.95rem;font-weight:700}.info-card.gold .info-value{color:#ffd700}.info-label{font-size:0.65rem;color:#666}.participant-grid{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}.participant-chip{display:flex;align-items:center;gap:6px;padding:8px 12px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);border-radius:20px;font-size:0.8rem;cursor:pointer;transition:all 0.2s}.participant-chip.selected{background:rgba(0,255,136,0.1);border-color:#00ff88;color:#00ff88}.chip-color{width:6px;height:6px;border-radius:50%}.btn-start{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:12px;background:linear-gradient(135deg,#ffd700,#ff9500);border:none;border-radius:10px;color:#000;font-family:inherit;font-size:0.9rem;font-weight:700;cursor:pointer;margin-bottom:16px}.round-list{display:flex;flex-direction:column;gap:6px}.round-card{display:flex;align-items:center;gap:10px;padding:10px 12px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);border-radius:8px;cursor:pointer}.round-card.active{border-color:rgba(0,255,136,0.3)}.round-card.complete{opacity:0.8}.round-num{width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:rgba(255,0,102,0.15);border-radius:8px;font-size:0.75rem;font-weight:700;color:#ff0066}.round-info{flex:1}.round-title{display:block;font-size:0.85rem;font-weight:600}.round-prize{font-size:0.7rem;color:#888}.round-status{padding:4px 8px;border-radius:10px;font-size:0.65rem;font-weight:600}.round-status.active{background:rgba(0,255,136,0.15);color:#00ff88}.round-status.complete{background:rgba(255,215,0,0.15);color:#ffd700}.round-selector{display:flex;gap:6px;margin-bottom:12px;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch}.round-tab{padding:8px 14px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);border-radius:16px;color:#888;font-family:inherit;font-size:0.8rem;font-weight:600;cursor:pointer;white-space:nowrap}.round-tab.active{background:rgba(255,0,102,0.2);border-color:#ff0066;color:#ff0066}.round-tab.complete{opacity:0.7}.round-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.round-header h2{font-size:1rem;color:#ffd700}.round-prize-badge{padding:4px 10px;background:rgba(255,215,0,0.15);border-radius:12px;font-size:0.8rem;color:#ffd700;font-weight:600}.bracket-scroll{overflow-x:auto;padding-bottom:8px;-webkit-overflow-scrolling:touch}.bracket-container{display:flex;align-items:center;gap:16px;min-width:max-content}.bracket-round{display:flex;flex-direction:column;gap:8px}.round-label{text-align:center;padding:6px 12px;background:rgba(255,0,102,0.15);border-radius:6px;font-size:0.7rem;font-weight:600;color:#ff0066}.round-matches{display:flex;flex-direction:column;justify-content:space-around;gap:10px;flex:1}.match-box{background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px;min-width:140px}.match-box.ready{border-color:#ff0066;box-shadow:0 0 10px rgba(255,0,102,0.2)}.match-box.complete{border-color:rgba(0,255,136,0.3)}.match-box.loser{border-color:rgba(255,255,255,0.05)}.match-player{display:flex;justify-content:space-between;align-items:center;padding:6px 8px;border-radius:4px}.match-player.winner{background:rgba(0,255,136,0.15)}.match-player .name{font-size:0.8rem;font-weight:600}.match-player .score{font-size:1rem;font-weight:900;color:#ff0066}.match-player .bye,.match-player .tbd{font-size:0.75rem;color:#444;font-style:italic}.match-vs{text-align:center;font-size:0.6rem;color:#444;padding:2px 0}.match-action{margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.05)}.score-input{display:flex;align-items:center;gap:4px}.score-input input{width:36px;padding:6px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.2);border-radius:4px;color:#fff;text-align:center;font-size:0.9rem}.score-input input:focus{outline:none;border-color:#ff0066}.score-input span{color:#444;font-size:0.8rem}.score-input .ok,.score-input .no{padding:6px 8px;border:none;border-radius:4px;cursor:pointer}.score-input .ok{background:rgba(0,255,136,0.2);color:#00ff88}.score-input .no{background:rgba(255,0,0,0.2);color:#ff6666}.match-action .enter,.match-action .edit{width:100%;padding:6px;border:none;border-radius:4px;font-family:inherit;font-size:0.75rem;font-weight:600;cursor:pointer}.match-action .enter{background:linear-gradient(135deg,#ff0066,#cc0052);color:#fff}.match-action .edit{background:rgba(255,255,255,0.1);color:#888}.champion-slot{display:flex;flex-direction:column;align-items:center;gap:8px;padding:14px;background:linear-gradient(135deg,rgba(255,215,0,0.2),rgba(255,150,0,0.1));border:2px solid #ffd700;border-radius:12px;min-width:90px;color:#ffd700;font-weight:700;animation:glow 2s infinite alternate}@keyframes glow{from{box-shadow:0 0 10px rgba(255,215,0,0.2)}to{box-shadow:0 0 20px rgba(255,215,0,0.4)}}.champion-slot .tbd{color:#666;font-weight:400}.loser-bracket{display:flex;gap:12px;overflow-x:auto;padding:8px 0;-webkit-overflow-scrolling:touch}.loser-round{display:flex;flex-direction:column;gap:8px;min-width:150px}.complete-banner{display:flex;align-items:center;justify-content:center;gap:10px;padding:16px;background:linear-gradient(135deg,rgba(255,215,0,0.15),transparent);border:1px solid rgba(255,215,0,0.2);border-radius:10px;margin-top:16px;color:#ffd700;font-weight:700}.prize-summary{margin-bottom:16px}.summary-card{display:flex;flex-direction:column;align-items:center;padding:20px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);border-radius:12px}.summary-card.total{background:linear-gradient(135deg,rgba(255,215,0,0.15),rgba(255,150,0,0.05));border-color:rgba(255,215,0,0.3)}.summary-label{font-size:0.8rem;color:#888;margin-bottom:6px}.summary-value{font-size:1.8rem;font-weight:900;color:#ffd700}.prize-list{display:flex;flex-direction:column;gap:6px;margin-bottom:16px}.prize-row{display:flex;align-items:center;gap:10px;padding:10px 12px;background:rgba(0,0,0,0.3);border-radius:8px}.prize-row.top-1{background:linear-gradient(90deg,rgba(255,215,0,0.15),transparent)}.prize-row.top-2{background:linear-gradient(90deg,rgba(192,192,192,0.1),transparent)}.prize-row.top-3{background:linear-gradient(90deg,rgba(205,127,50,0.1),transparent)}.prize-rank{width:24px;height:24px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.1);border-radius:6px;font-size:0.7rem;font-weight:700;color:#666}.top-1 .prize-rank{color:#ffd700}.top-2 .prize-rank{color:#c0c0c0}.top-3 .prize-rank{color:#cd7f32}.prize-color{width:4px;height:20px;border-radius:2px}.prize-info{flex:1}.prize-name{display:block;font-size:0.85rem;font-weight:600}.prize-total{font-size:0.7rem;color:#666}.prize-amount{font-size:0.95rem;font-weight:700;color:#ffd700}.round-result{background:rgba(0,0,0,0.3);border-radius:8px;margin-bottom:10px;overflow:hidden}.round-result-header{display:flex;justify-content:space-between;padding:10px 12px;background:rgba(255,0,102,0.1);font-size:0.8rem;font-weight:600}.round-result-prize{color:#ffd700}.round-result-list{padding:8px 12px}.round-result-row{display:flex;align-items:center;gap:10px;padding:6px 0;font-size:0.8rem}.rr-place{width:30px;color:#888}.rr-name{flex:1}.rr-prize{color:#ffd700;font-weight:600}.bottom-nav{position:fixed;bottom:0;left:0;right:0;display:flex;justify-content:space-around;align-items:center;padding:6px 12px;padding-bottom:calc(6px + env(safe-area-inset-bottom,0px));background:linear-gradient(180deg,rgba(10,10,46,0.98),rgba(5,5,32,1));border-top:1px solid rgba(255,255,255,0.1)}.nav-item{display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 10px;background:transparent;border:none;color:#444;font-size:0.6rem;cursor:pointer}.nav-item:hover{color:#888}.nav-item.active{color:#ff0066}.nav-item.center{margin-top:-16px}.center-icon{width:48px;height:48px;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#ffd700,#ff9500);border-radius:50%;color:#000;box-shadow:0 4px 16px rgba(255,215,0,0.4)}.nav-item:disabled .center-icon{background:#333;color:#666;box-shadow:none}.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;z-index:1000;padding:16px}.modal-content{width:100%;max-width:360px;background:linear-gradient(145deg,#1a1a4a,#0a0a2e);border:1px solid rgba(255,0,102,0.3);border-radius:14px;overflow:hidden}.modal-header{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;background:rgba(255,0,102,0.1);border-bottom:1px solid rgba(255,0,102,0.2)}.modal-header h3{font-size:1rem;color:#ff0066}.modal-close{width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.1);border:none;border-radius:6px;color:#888;cursor:pointer}.modal-body{padding:16px}.form-group{margin-bottom:14px}.form-group label{display:block;margin-bottom:6px;font-size:0.8rem;color:#888}.form-group input,.form-group select{width:100%;padding:10px 14px;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;font-family:inherit;font-size:0.95rem}.form-group input:focus,.form-group select:focus{outline:none;border-color:#ff0066}.input-with-prefix{display:flex;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);border-radius:8px}.input-with-prefix span{padding:10px 14px;color:#ffd700;font-weight:700}.input-with-prefix input{border:none;border-radius:0 8px 8px 0;padding-left:0}.modal-actions{display:flex;gap:10px;padding-top:10px}.btn-cancel,.btn-confirm{flex:1;padding:10px;border:none;border-radius:8px;font-family:inherit;font-weight:600;cursor:pointer}.btn-cancel{background:rgba(255,255,255,0.1);color:#888}.btn-confirm{background:linear-gradient(135deg,#ff0066,#cc0052);color:#fff}.btn-primary{padding:10px 24px;background:linear-gradient(135deg,#ffd700,#ff9500);border:none;border-radius:8px;color:#000;font-family:inherit;font-weight:700;cursor:pointer;margin-top:10px}.confetti-wrap{position:fixed;top:0;left:0;right:0;bottom:0;pointer-events:none;z-index:9999;overflow:hidden}.confetti{position:absolute;width:8px;height:8px;top:-20px;animation:fall 3s linear forwards}@keyframes fall{to{transform:translateY(100vh) rotate(720deg);opacity:0}}::-webkit-scrollbar{width:3px;height:3px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:rgba(255,0,102,0.3);border-radius:2px}@media (max-width:380px){.info-cards{grid-template-columns:1fr 1fr}.info-card:last-child{grid-column:span 2}.match-box{min-width:120px;padding:6px}.match-player .name{font-size:0.75rem}.champion-slot{min-width:70px;padding:10px}}
+  </style>
+</body>
+</html>
